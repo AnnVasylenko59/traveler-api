@@ -8,7 +8,6 @@ from app.database import create_pool, close_pool
 from app.routers import travel_plans, locations
 
 
-# Керування життєвим циклом додатку (старт і стоп бази даних)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await create_pool()
@@ -16,21 +15,17 @@ async def lifespan(app: FastAPI):
     await close_pool()
 
 
-# Ініціалізація додатку
 app = FastAPI(
     title="Traveler API",
     description="API для планування подорожей",
     lifespan=lifespan
 )
 
-
-# Підключення роутерів
+# Підключення маршрутів
 app.include_router(travel_plans.router)
 app.include_router(locations.router)
 
 
-# Глобальний обробник стандартних HTTPException
-# Повертаємо "error" замість "detail"
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     return JSONResponse(
@@ -39,7 +34,6 @@ async def http_exception_handler(request, exc):
     )
 
 
-# Обробник валідаційних помилок
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
     return JSONResponse(
@@ -51,7 +45,11 @@ async def validation_exception_handler(request, exc):
     )
 
 
-# Перевірка працездатності (Health Check згідно з вимогами)
+# Health Check для k6
+@app.get("/health")
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok"}
+    return {
+        "status": "healthy",
+        "database": "connected"
+    }
