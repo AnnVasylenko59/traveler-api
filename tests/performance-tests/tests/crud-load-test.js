@@ -37,6 +37,7 @@ import {
   getTravelPlan,
   updateTravelPlan,
   deleteTravelPlan,
+  verifyPlanDeleted,
   thinkTime,
 } from '../utils/api-client.js';
 import {
@@ -161,7 +162,7 @@ export default function () {
   // 6. ПЕРЕВІРКА ВИДАЛЕННЯ (очікується 404)
   // --------------------------------------------------
   // Намагаємось отримати видалений план - має повернути 404
-  getTravelPlan(planId); // Функція сама перевірить 404
+  verifyPlanDeleted(planId); // Функція сама перевірить 404
 
   // Пауза перед наступною ітерацією
   sleep(1);

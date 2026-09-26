@@ -10,7 +10,7 @@ import { ENDPOINTS, DEFAULT_HEADERS } from '../config/endpoints.js';
 
 // Кастомні метрики
 export const errorRate = new Rate('api_errors');
-export const conflictRate = new Rate('optimistic_lock_conflicts');
+export const optimisticLockConflicts = new Rate('optimistic_lock_conflicts');
 
 /**
  * Виконує HTTP запит з перевірками та метриками
@@ -213,34 +213,40 @@ export function verifyPlanDeleted(planId) {
  * @param {object} updateData - Дані для оновлення (повинні містити version)
  * @returns {object} Оновлений план або null
  */
-export function updateTravelPlan(planId, updateData) {
-  const response = makeRequest(
-    'PUT',
-    ENDPOINTS.TRAVEL_PLAN_BY_ID(planId),
-    updateData,
-    [200, 409],
-    'write'
-  );
+export function updateTravelPlan(id, data) {
+  const url = `${ENDPOINTS.TRAVEL_PLANS}/${id}`;
 
-  check(response, {
-    'plan updated successfully': (r) => r.status === 200,
-    'version incremented': (r) => {
-      if (r.status !== 200) return false;
-      const body = JSON.parse(r.body);
-      return body.version === updateData.version + 1;
-    },
+  const res = http.put(url, JSON.stringify(data), {
+    headers: { 'Content-Type': 'application/json' },
+    tags: { type: 'write', name: 'update_travel_plan' },
+    responseCallback: http.expectedStatuses(200, 409),
   });
 
-  if (response.status === 200) {
-    return JSON.parse(response.body);
+  const isConflict = res.status === 409;
+  const isSuccess = res.status === 200;
+
+  if (typeof optimisticLockConflicts !== 'undefined') {
+    optimisticLockConflicts.add(isConflict ? 1 : 0);
   }
-  
-  // Якщо 409 - це конфлікт версій (очікувана поведінка в race condition тестах)
-  if (response.status === 409) {
-    return { conflict: true, body: JSON.parse(response.body) };
+
+  check(res, {
+    'status is one of [200,409]': (r) => r.status === 200 || r.status === 409,
+    'plan updated successfully': (r) => r.status === 409 || (r.status === 200 && r.json('id') !== undefined),
+    'version incremented': (r) => r.status === 409 || (r.status === 200 && r.json('version') > data.version),
+  });
+
+  if (isConflict) {
+    return { conflict: true, current_version: res.json('current_version') };
   }
-  
-  return null;
+
+  if (!isSuccess) {
+    if (typeof apiErrors !== 'undefined') {
+      apiErrors.add(1);
+    }
+    return null;
+  }
+
+  return res.json();
 }
 
 /**

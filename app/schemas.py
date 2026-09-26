@@ -116,8 +116,16 @@ class LocationCreate(LocationBase):
     pass
 
 
-class LocationUpdate(LocationBase):
-    visit_order: Optional[int] = Field(None, gt=0)
+class LocationUpdate(BaseModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+    latitude: Optional[Decimal] = None
+    longitude: Optional[Decimal] = None
+    arrival_date: Optional[date] = None
+    departure_date: Optional[date] = None
+    budget: Optional[Decimal] = None
+    notes: Optional[str] = None
+    visit_order: Optional[int] = None
 
 
 class LocationResponse(LocationBase):
