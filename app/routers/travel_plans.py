@@ -99,13 +99,7 @@ async def update_travel_plan(
     plan: TravelPlanUpdate,
     conn: asyncpg.Connection = Depends(get_db_connection)
 ):
-    check_query = "SELECT id FROM travel_plans WHERE id = $1;"
-    if not await conn.fetchval(check_query, plan_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Travel plan not found"
-        )
-
+    # оновлення без попереднього SELECT (усуває race condition)
     update_query = """
         UPDATE travel_plans
         SET title = $1, description = $2, start_date = $3, end_date = $4, 
@@ -127,10 +121,18 @@ async def update_travel_plan(
     )
 
     if not updated_row:
+        # Перевіряємо актуальний стан ресурсу
         current_version = await conn.fetchval(
             "SELECT version FROM travel_plans WHERE id = $1;",
             plan_id
         )
+        if current_version is None:
+            # якщо ресурс уже видалено паралельним запитом - повертаємо 404
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Travel plan not found"
+            )
+        # якщо ресурс існує, але версія відрізняється - повертаємо 409
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content={
@@ -148,6 +150,7 @@ async def delete_travel_plan(
     plan_id: UUID,
     conn: asyncpg.Connection = Depends(get_db_connection)
 ):
+    # видалення в один запит
     delete_query = "DELETE FROM travel_plans WHERE id = $1 RETURNING id;"
     deleted_id = await conn.fetchval(delete_query, plan_id)
 

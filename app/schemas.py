@@ -119,13 +119,14 @@ class LocationCreate(LocationBase):
 class LocationUpdate(BaseModel):
     name: Optional[str] = None
     address: Optional[str] = None
-    latitude: Optional[Decimal] = None
-    longitude: Optional[Decimal] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     arrival_date: Optional[date] = None
     departure_date: Optional[date] = None
     budget: Optional[Decimal] = None
     notes: Optional[str] = None
     visit_order: Optional[int] = None
+    plan_version: Optional[int] = None # Контроль версії батьківського плану для запобігання Lost Update
 
 
 class LocationResponse(LocationBase):
