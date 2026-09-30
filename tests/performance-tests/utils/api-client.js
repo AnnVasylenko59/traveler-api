@@ -53,7 +53,9 @@ function makeRequest(method, url, body = null, expectedStatuses = [200], operati
 
   // Трекінг конфліктів залишається як є. Він буде спрацьовувати, але не викликатиме помилку.
   if (response.status === 409) {
-    conflictRate.add(1);
+    optimisticLockConflicts.add(1);
+  } else {
+    optimisticLockConflicts.add(0);
   }
 
   return response;
@@ -335,27 +337,46 @@ export function addLocation(planId, locationData) {
 }
 
 /**
- * Оновлює локацію
+ * Оновлює локацію з перевіркою версії батьківського плану (захист від Lost Update)
  * @param {string} locationId - ID локації
  * @param {object} updateData - Дані для оновлення
- * @returns {object} Оновлена локація або null
+ * @param {number} planVersion - Версія батьківського плану
+ * @returns {object} Оновлена локація або об'єкт конфлікту
  */
-export function updateLocation(locationId, updateData) {
+export function updateLocation(locationId, updateData, planVersion = null) {
+  const payload = Object.assign({}, updateData);
+  if (planVersion !== null && planVersion !== undefined) {
+    payload.plan_version = planVersion;
+  }
+
   const response = makeRequest(
     'PUT',
     ENDPOINTS.LOCATION_BY_ID(locationId),
-    updateData,
+    payload,
     [200, 409],
     'write'
   );
 
+  const isConflict = response.status === 409;
+  const isSuccess = response.status === 200;
+
   check(response, {
-    'location updated successfully': (r) => r.status === 200,
+    'status is one of [200,409]': (r) => r.status === 200 || r.status === 409,
+    'location updated successfully': (r) => r.status === 200 || r.status === 409,
   });
 
-  if (response.status === 200) {
-    return JSON.parse(response.body);
+  if (isConflict) {
+    return { conflict: true, current_version: response.json('current_version') };
   }
+
+  if (isSuccess) {
+    try {
+      return JSON.parse(response.body);
+    } catch (e) {
+      return response.json();
+    }
+  }
+
   return null;
 }
 

@@ -38,11 +38,14 @@ import {
   updateTravelPlan,
   deleteTravelPlan,
   verifyPlanDeleted,
+  addLocation,
+  updateLocation,
   thinkTime,
 } from '../utils/api-client.js';
 import {
   generateTravelPlan,
   generateTravelPlanUpdate,
+  generateLocation,
 } from '../utils/data-generator.js';
 
 // ============================================================================
@@ -95,14 +98,12 @@ export default function () {
   const createdPlan = createTravelPlan(newPlan);
   
   if (!createdPlan) {
-    console.error('Failed to create travel plan');
     return;
   }
 
   const planId = createdPlan.id;
-  const initialVersion = createdPlan.version;
+  let currentVersion = createdPlan.version;
 
-  // Пауза між операціями (імітація поведінки реального користувача)
   thinkTime(1, 2);
 
   // --------------------------------------------------
@@ -116,12 +117,23 @@ export default function () {
     return;
   }
 
+  // Робота з вкладеною локацією (перевірка контролю версій)
+  const locationData = typeof generateLocation === 'function' 
+    ? generateLocation() 
+    : { name: 'City Center' };
+  const loc = addLocation(planId, locationData);
+  if (loc) {
+    currentVersion += 1;
+    updateLocation(loc.id, { name: 'Updated Center' }, currentVersion);
+    updateLocation(loc.id, { name: 'Conflict Center' }, currentVersion - 1);
+  }
+
   thinkTime(1, 2);
 
   // --------------------------------------------------
   // 3. УСПІШНЕ ОНОВЛЕННЯ (з коректною версією)
   // --------------------------------------------------
-  const updateData = generateTravelPlanUpdate(initialVersion);
+  const updateData = generateTravelPlanUpdate(currentVersion);
   const updatedPlan = updateTravelPlan(planId, updateData);
   
   if (!updatedPlan || updatedPlan.conflict) {
@@ -136,7 +148,7 @@ export default function () {
   // 4. ТЕСТ OPTIMISTIC LOCKING (очікується конфлікт 409)
   // --------------------------------------------------
   // Намагаємось оновити зі старою версією - має повернути 409 Conflict
-  const conflictUpdate = generateTravelPlanUpdate(initialVersion);
+  const conflictUpdate = generateTravelPlanUpdate(1);
   const conflictResult = updateTravelPlan(planId, conflictUpdate);
   
   // Це очікувана поведінка - конфлікт версій
