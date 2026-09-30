@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, status, Query
 from fastapi.responses import JSONResponse
 from uuid import UUID
 import asyncpg
+from typing import List, Optional
 
 from app.schemas import LocationCreate, LocationUpdate, LocationResponse
 from app.database import get_db_connection
