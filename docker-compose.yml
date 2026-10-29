@@ -1,21 +1,33 @@
 name: traveler_api_stack
 
 services:
-  # PostgreSQL Database
+  # Primary (Master Database)
   postgres:
     image: postgres:16-alpine
     container_name: traveler_db
     restart: unless-stopped
+    command:
+      - "postgres"
+      - "-c"
+      - "listen_addresses=*"
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "max_wal_senders=10"
+      - "-c"
+      - "max_replication_slots=10"
+      - "-c"
+      - "hot_standby=on"
     environment:
       POSTGRES_DB: ${DB_NAME_PROD:-traveler_prod}
       POSTGRES_USER: ${DB_USER:-travel_user}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-travel_secret_pass}
-      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+      POSTGRES_HOST_AUTH_METHOD: "trust"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "5432:5432"
     networks:
       - traveler_network
     healthcheck:
@@ -23,20 +35,40 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 1G
-        reservations:
-          cpus: "0.25"
-          memory: 256M
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+
+  # Standby Replica (Physical Replica)
+  postgres_sub:
+    image: postgres:16-alpine
+    container_name: traveler_replica
+    restart: unless-stopped
+    entrypoint: >
+      sh -c "
+      rm -rf /var/lib/postgresql/data/* &&
+      until su-exec postgres pg_basebackup -h postgres -p 5432 -U travel_user -D /var/lib/postgresql/data -Fp -Xs -R; do
+        echo 'Waiting for primary...';
+        sleep 2;
+      done &&
+      chmod 700 /var/lib/postgresql/data &&
+      exec su-exec postgres postgres -c hot_standby=on
+      "
+    environment:
+      POSTGRES_DB: ${DB_NAME_PROD:-traveler_prod}
+      POSTGRES_USER: ${DB_USER:-travel_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-travel_secret_pass}
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+    ports:
+      - "55432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - traveler_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-travel_user} -d ${DB_NAME_PROD:-traveler_prod}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # FastAPI Web Application
   web:
@@ -48,38 +80,13 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${DB_USER:-travel_user}:${DB_PASSWORD:-travel_secret_pass}@postgres:5432/${DB_NAME_PROD:-traveler_prod}
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-travel_user}
-      DB_PASSWORD: ${DB_PASSWORD:-travel_secret_pass}
-      DB_NAME: ${DB_NAME_PROD:-traveler_prod}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
-      - "${APP_PORT:-8000}:8000"
+      - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - traveler_network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 512M
-        reservations:
-          cpus: "0.25"
-          memory: 256M
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
 networks:
   traveler_network:
@@ -87,4 +94,4 @@ networks:
 
 volumes:
   postgres_data:
-    driver: local
+  postgres_replica_data:
