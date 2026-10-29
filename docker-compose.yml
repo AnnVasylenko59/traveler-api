@@ -18,6 +18,10 @@ services:
       - "max_replication_slots=10"
       - "-c"
       - "hot_standby=on"
+      - "-c"
+      - "synchronous_commit=on"
+      - "-c"
+      - "synchronous_standby_names=*"
     environment:
       POSTGRES_DB: ${DB_NAME_PROD:-traveler_prod}
       POSTGRES_USER: ${DB_USER:-travel_user}
