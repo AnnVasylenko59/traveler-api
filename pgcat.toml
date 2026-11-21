@@ -1,0 +1,28 @@
+[general]
+host = "0.0.0.0"
+port = 6432
+admin_username = "admin"
+admin_password = "admin_password"
+log_level = "info"
+enable_prometheus_exporter = false
+
+[pools.traveler_prod]
+pool_mode = "transaction"
+load_balancing_mode = "random"
+default_role = "any"
+primary_reads_enabled = false
+query_parser_enabled = true
+query_parser_read_write_splitting = true
+
+[pools.traveler_prod.users.0]
+username = "travel_user"
+password = "travel_secret_pass"
+pool_size = 50
+
+[pools.traveler_prod.shards.0]
+servers = [
+  ["postgres", 5432, "primary"],
+  ["postgres_sub_1", 5432, "replica"],
+  ["postgres_sub_2", 5432, "replica"]
+]
+database = "traveler_prod"

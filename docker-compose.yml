@@ -18,10 +18,6 @@ services:
       - "max_replication_slots=10"
       - "-c"
       - "hot_standby=on"
-    # - "-c"
-    # - "synchronous_commit=on"
-    # - "-c"
-    # - "synchronous_standby_names=*"
     environment:
       POSTGRES_DB: ${DB_NAME_PROD:-traveler_prod}
       POSTGRES_USER: ${DB_USER:-travel_user}
@@ -38,7 +34,7 @@ services:
       timeout: 5s
       retries: 5
 
-# Standby Replica 1
+  # Standby Replica 1
   postgres_sub_1:
     image: postgres:16-alpine
     container_name: traveler_replica_1
@@ -102,7 +98,26 @@ services:
       timeout: 3s
       retries: 10
 
+  # PgCat Connection Pooler & Read/Write Splitter
+  pgcat:
+    image: ghcr.io/postgresml/pgcat:latest
+    container_name: traveler_pgcat
+    restart: unless-stopped
+    volumes:
+      - ./pgcat.toml:/etc/pgcat/pgcat.toml:ro
+    command: ["pgcat", "/etc/pgcat/pgcat.toml"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgres_sub_1:
+        condition: service_healthy
+      postgres_sub_2:
+        condition: service_healthy
+    networks:
+      - traveler_network
+
   # FastAPI Web Application
+# FastAPI Web Application
   web:
     build:
       context: .
@@ -111,12 +126,14 @@ services:
     container_name: traveler_api_app
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${DB_USER:-travel_user}:${DB_PASSWORD:-travel_secret_pass}@postgres:5432/${DB_NAME_PROD:-traveler_prod}
+      APP_PORT: ${APP_PORT:-8000}
+      DATABASE_URL: postgresql://${DB_USER:-travel_user}:${DB_PASSWORD:-travel_secret_pass}@pgcat:6432/${DB_NAME_PROD:-traveler_prod}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      pgcat:
+        condition: service_started
     networks:
       - traveler_network
 
