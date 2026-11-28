@@ -19,7 +19,7 @@ async def add_location(
     conn: asyncpg.Connection = Depends(get_db_connection)
 ):
     async with conn.transaction():
-        # блокуємо батьківський план та підвищуємо його версію
+        # 1. Блокуємо батьківський план та підвищуємо його версію
         plan = await conn.fetchrow(
             "UPDATE travel_plans SET version = version + 1 WHERE id = $1 RETURNING id;", 
             plan_id
@@ -30,7 +30,7 @@ async def add_location(
                 detail="Travel plan not found"
             )
         
-        # вираховуємо наступний порядковий номер у тій самій транзакції
+        # 2. Вираховуємо наступний порядковий номер і додаємо локацію
         next_order = await conn.fetchval(
             "SELECT COALESCE(MAX(visit_order), 0) + 1 FROM locations WHERE travel_plan_id = $1;", 
             plan_id
@@ -71,20 +71,18 @@ async def update_location(
 
     try:
         async with conn.transaction():
-            # блокуємо рядок локації для читання
-            loc = await conn.fetchrow(
-                "SELECT id, travel_plan_id FROM locations WHERE id = $1 FOR UPDATE;", 
+            # Отримуємо plan_id без блокування рядка locations, щоб уникнути deadlock
+            plan_id = await conn.fetchval(
+                "SELECT travel_plan_id FROM locations WHERE id = $1;", 
                 location_id
             )
-            if not loc:
+            if not plan_id:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, 
                     detail="Location not found"
                 )
 
-            plan_id = loc["travel_plan_id"]
-
-            # якщо передано plan_version — перевіряємо оптимістичне блокування батьківського плану
+            # 1. Спочатку блокуємо батьківський план (єдиний порядок блокування: travel_plans -> locations)
             if location.plan_version is not None:
                 update_plan = await conn.fetchrow(
                     """
@@ -114,12 +112,27 @@ async def update_location(
                         }
                     )
             else:
-                await conn.execute(
-                    "UPDATE travel_plans SET version = version + 1 WHERE id = $1;", 
+                updated_plan = await conn.fetchrow(
+                    "UPDATE travel_plans SET version = version + 1 WHERE id = $1 RETURNING id;", 
                     plan_id
                 )
+                if not updated_plan:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Parent travel plan not found"
+                    )
 
-            # оновлюємо дані локації
+            # 2. Тепер блокуємо рядок локації та оновлюємо її дані
+            loc = await conn.fetchrow(
+                "SELECT id FROM locations WHERE id = $1 FOR UPDATE;", 
+                location_id
+            )
+            if not loc:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, 
+                    detail="Location not found"
+                )
+
             update_query = """
                 UPDATE locations
                 SET name = COALESCE($1, name),
@@ -158,20 +171,18 @@ async def delete_location(
     conn: asyncpg.Connection = Depends(get_db_connection)
 ):
     async with conn.transaction():
-        # блокуємо рядок локації перед видаленням
-        loc = await conn.fetchrow(
-            "SELECT travel_plan_id FROM locations WHERE id = $1 FOR UPDATE;", 
+        # Отримуємо plan_id без блокування рядка locations
+        plan_id = await conn.fetchval(
+            "SELECT travel_plan_id FROM locations WHERE id = $1;", 
             location_id
         )
-        if not loc:
+        if not plan_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, 
                 detail="Location not found"
             )
 
-        plan_id = loc["travel_plan_id"]
-
-        # якщо передано версію плану - валідуємо її перед видаленням
+        # 1. Спочатку блокуємо батьківський план
         if plan_version is not None:
             updated_plan = await conn.fetchrow(
                 "UPDATE travel_plans SET version = version + 1 WHERE id = $1 AND version = $2 RETURNING id;",
@@ -192,8 +203,18 @@ async def delete_location(
                     }
                 )
         else:
-            await conn.execute("UPDATE travel_plans SET version = version + 1 WHERE id = $1;", plan_id)
+            updated_plan = await conn.fetchrow(
+                "UPDATE travel_plans SET version = version + 1 WHERE id = $1 RETURNING id;", 
+                plan_id
+            )
+            if not updated_plan:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Travel plan not found")
 
-        # видаляємо локацію
-        await conn.execute("DELETE FROM locations WHERE id = $1;", location_id)
+        # 2. Видаляємо локацію
+        deleted_id = await conn.fetchval("DELETE FROM locations WHERE id = $1 RETURNING id;", location_id)
+        if not deleted_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, 
+                detail="Location not found"
+            )
         return None

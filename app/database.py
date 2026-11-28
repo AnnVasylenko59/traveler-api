@@ -51,23 +51,26 @@ _compat_asyncpg.DataError = psycopg.errors.DataError
 _compat_asyncpg.IntegrityConstraintViolationError = psycopg.errors.IntegrityError
 sys.modules["asyncpg"] = _compat_asyncpg
 
+
 async def create_pool():
     global pool
     pool = AsyncConnectionPool(
         conninfo=DATABASE_URL,
-        min_size=5,
-        max_size=25,
+        min_size=10,
+        max_size=50,
         open=False,
         kwargs={"autocommit": True, "prepare_threshold": None}
     )
     await pool.open()
     print("Database pool created (psycopg + PgCat)!")
 
+
 async def close_pool():
     global pool
     if pool:
         await pool.close()
         print("Database pool closed!")
+
 
 async def get_db_connection():
     async with pool.connection() as conn:

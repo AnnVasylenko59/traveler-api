@@ -2,49 +2,6 @@
  * ============================================================================
  * REALISTIC USER JOURNEY LOAD TEST
  * ============================================================================
- * 
- * МЕТА:
- * Симулювати реальну поведінку користувачів при плануванні подорожі.
- * Включає природні паузи (think time), помилки, зміну рішень та
- * типові сценарії використання API.
- * 
- * СПІВВІДНОШЕННЯ: ~60% читання / ~40% запису (збалансоване)
- * 
- * ТИПОВІ СЦЕНАРІЇ КОРИСТУВАЧІВ:
- * 
- * 1. "Новий користувач" (30% - створює перший plan)
- *    - Переглядає приклади (читає публічні плани)
- *    - Створює свій перший travel plan
- *    - Додає локації поступово
- *    - Вносить виправлення (редагує)
- * 
- * 2. "Досвідчений користувач" (50% - редагує існуючий)
- *    - Переглядає свої плани
- *    - Вибирає один для редагування
- *    - Додає нові локації
- *    - Оновлює існуючі
- *    - Видаляє непотрібні
- * 
- * 3. "Браузер" (20% - тільки переглядає)
- *    - Шукає ідеї для подорожі
- *    - Переглядає різні плани
- *    - Детально вивчає локації
- *    - Не створює власних планів
- * 
- * ОСОБЛИВОСТІ:
- * - Think time між діями (1-5 секунд)
- * - Реалістичні помилки та виправлення
- * - Іноді користувач змінює думку (видаляє щойно створене)
- * - Імітація паралельної роботи в кількох вкладках
- * - Сесії різної тривалості
- * 
- * МЕТРИКИ:
- * - User session duration
- * - Actions per session
- * - Session completion rate
- * - Think time impact on performance
- * 
- * ============================================================================
  */
 
 import { check, sleep, group } from 'k6';
@@ -203,6 +160,7 @@ function newUserJourney() {
           actions++;
           
           if (location && location.id) {
+            currentVersion += 1;
             thinkTime(1, 2);
             getTravelPlan(planId);
             actions++;
@@ -242,7 +200,7 @@ function newUserJourney() {
 }
 
 // ============================================================================
-// СЦЕНАРІЙ 2: ДОСВІДЧЕНИЙ КОРИСТУВАЧ
+// СЦЕНАРІЙ 2: ДОСВІДЧЕНИЙ КОРИСТУВАЧ (ізольований план на сесію)
 // ============================================================================
 
 function experiencedUserJourney() {
@@ -250,36 +208,42 @@ function experiencedUserJourney() {
 
   try {
     group('Experienced User Journey', function() {
-      // 1. Перегляд своїх планів
-      const myPlans = listTravelPlans();
+      // 1. Перегляд списку планів
+      listTravelPlans();
       actions++;
       thinkTime(1, 2);
 
-      if (!Array.isArray(myPlans) || myPlans.length === 0) {
-        const planData = generateTravelPlan();
-        createTravelPlan(planData);
-        actions++;
+      // 2. Створення власного плану для редагування (усуває гонитву 404/409 між VU)
+      const ownPlanData = generateTravelPlan();
+      const createdPlan = createTravelPlan(ownPlanData);
+      actions++;
+
+      if (!createdPlan || !createdPlan.id) {
         return;
       }
 
-      // 2. Вибір плану для редагування
-      const validPlans = myPlans.filter(p => p && p.id);
-      if (validPlans.length === 0) return;
+      addLocation(createdPlan.id, generateLocation());
+      addLocation(createdPlan.id, generateLocation());
+      addLocation(createdPlan.id, generateLocation());
+      actions += 3;
 
-      const planToEdit = validPlans[Math.floor(Math.random() * validPlans.length)];
-      const fullPlan = getTravelPlan(planToEdit.id);
+      const fullPlan = getTravelPlan(createdPlan.id);
       actions++;
-      
+
       if (!fullPlan || !fullPlan.id) {
         return;
       }
 
+      let currentVersion = fullPlan.version || 4;
       thinkTime(1, 2);
 
       // 3. Додавання нової локації
       const locationData = generateLocation();
-      addLocation(fullPlan.id, locationData);
+      const addedLoc = addLocation(fullPlan.id, locationData);
       actions++;
+      if (addedLoc && addedLoc.id) {
+        currentVersion += 1;
+      }
 
       thinkTime(1, 2);
 
@@ -293,8 +257,11 @@ function experiencedUserJourney() {
             budget: (loc.budget != null ? Number(loc.budget) : 100) + 50,
             notes: 'Updated by experienced user',
           };
-          updateLocation(loc.id, updateData);
+          const updatedLoc = updateLocation(loc.id, updateData);
           actions++;
+          if (updatedLoc && updatedLoc.id) {
+            currentVersion += 1;
+          }
         }
       }
 
@@ -305,21 +272,25 @@ function experiencedUserJourney() {
         const locationToDelete = fullPlan.locations[fullPlan.locations.length - 1];
         if (locationToDelete && locationToDelete.id) {
           thinkTime(1, 2);
-          deleteLocation(locationToDelete.id);
+          const deleted = deleteLocation(locationToDelete.id);
           actions++;
+          if (deleted) {
+            currentVersion += 1;
+          }
         }
       }
 
-      // 6. Оновлення деталей плану
+      // 6. Оновлення деталей плану з актуальною версією та всіма полями
       thinkTime(1, 2);
-      const updateData = {
-        title: fullPlan.title || 'Updated Title',
-        description: fullPlan.description || 'Updated',
+      const updatePlanData = {
+        ...ownPlanData,
+        title: (fullPlan.title || ownPlanData.title) + ' (Edited)',
+        description: fullPlan.description || 'Updated description',
         budget: (fullPlan.budget != null ? Number(fullPlan.budget) : 2000) + 200,
-        version: fullPlan.version || 1,
+        version: currentVersion,
       };
       
-      updateTravelPlan(fullPlan.id, updateData);
+      updateTravelPlan(fullPlan.id, updatePlanData);
       actions++;
 
       // 7. Фінальна перевірка

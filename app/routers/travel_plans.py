@@ -56,7 +56,7 @@ async def get_travel_plans(
         query = "SELECT * FROM travel_plans ORDER BY created_at DESC LIMIT $1;"
         rows = await conn.fetch(query, limit)
     else:
-        query = "SELECT * FROM travel_plans ORDER BY created_at DESC;"
+        query = "SELECT * FROM travel_plans ORDER BY created_at DESC LIMIT 50;"
         rows = await conn.fetch(query)
 
     return [TravelPlanResponse.model_validate(dict(row)) for row in rows]
